@@ -1,0 +1,436 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+        "title": "DarkRoute public API",
+        "version": "1.0.0",
+        "description": "Quote and route private, non-custodial swaps through DarkRoute. No API key yet: every route is public and rate-limited per IP. Keys with tier-based limits are on the roadmap. A quote never creates an order; an order returns a one-time deposit address from the venue and DarkRoute never holds funds. The fee is 0.3% of the input, printed on the quote.",
+        "contact": {
+            "email": "support@darkroute.exchange",
+            "url": "https://darkroute.exchange/api"
+        }
+    },
+    "servers": [
+        {
+            "url": "https://app.darkroute.exchange/api/v1"
+        }
+    ],
+    "paths": {
+        "/tokens": {
+            "get": {
+                "summary": "Assets the router can quote",
+                "description": "188 assets across 35 chains at the time of writing, sorted popular first. Rate limit 60/min per IP.",
+                "responses": {
+                    "200": {
+                        "description": "ok",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TokensResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/quote": {
+            "post": {
+                "summary": "Dry quote for a pair and amount",
+                "description": "Never creates an order. recipient and refundTo are optional here; when omitted a placeholder address is used so the venue will quote. Rate limit 40/min per IP.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/QuoteRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "ok",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/QuoteResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/Bad"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/Slow"
+                    }
+                }
+            }
+        },
+        "/order": {
+            "post": {
+                "summary": "Create an order and get the one-time deposit address",
+                "description": "Non-custodial: the venue issues the deposit address; funds go from the sender into the route. The order id is the only credential for the status endpoint, so treat it as a secret. Rate limit 10/min per IP.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/OrderRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "created",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {
+                                            "const": true
+                                        },
+                                        "id": {
+                                            "type": "string",
+                                            "example": "dr_4f2a9c31be07"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/Bad"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/Slow"
+                    },
+                    "502": {
+                        "description": "venue did not return a deposit address"
+                    }
+                }
+            }
+        },
+        "/order/{id}": {
+            "get": {
+                "summary": "Order status, deposit address and receipt data",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "pattern": "^dr_[a-f0-9]{12}$"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "ok",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OrderResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "unknown order"
+                    }
+                }
+            }
+        },
+        "/stats": {
+            "get": {
+                "summary": "Router aggregates since launch",
+                "description": "Orders, settled, settled volume USD, gross fee USD, burned. No per-user data. Cached 60 s.",
+                "responses": {
+                    "200": {
+                        "description": "ok"
+                    }
+                }
+            }
+        },
+        "/burns": {
+            "get": {
+                "summary": "Buybacks and burns with hashes, plus the two live supply numbers",
+                "responses": {
+                    "200": {
+                        "description": "ok"
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "responses": {
+            "Bad": {
+                "description": "validation error, message in `error`"
+            },
+            "Slow": {
+                "description": "rate limited, try again in a minute"
+            }
+        },
+        "schemas": {
+            "TokensResponse": {
+                "type": "object",
+                "properties": {
+                    "ok": {
+                        "const": true
+                    },
+                    "venue": {
+                        "type": "string"
+                    },
+                    "tokens": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "assetId": {
+                                    "type": "string",
+                                    "example": "nep141:eth.omft.near"
+                                },
+                                "symbol": {
+                                    "type": "string"
+                                },
+                                "blockchain": {
+                                    "type": "string",
+                                    "example": "eth"
+                                },
+                                "decimals": {
+                                    "type": "integer"
+                                },
+                                "price": {
+                                    "type": "number",
+                                    "nullable": true
+                                },
+                                "contractAddress": {
+                                    "type": "string",
+                                    "nullable": true
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "QuoteRequest": {
+                "type": "object",
+                "required": [
+                    "originAsset",
+                    "destinationAsset",
+                    "amount"
+                ],
+                "properties": {
+                    "originAsset": {
+                        "type": "string",
+                        "description": "assetId from /tokens"
+                    },
+                    "destinationAsset": {
+                        "type": "string"
+                    },
+                    "amount": {
+                        "type": "string",
+                        "description": "human units of the origin asset, e.g. \"0.1\""
+                    },
+                    "recipient": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "refundTo": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "slippageBps": {
+                        "type": "integer",
+                        "description": "clamped by the server",
+                        "nullable": true
+                    }
+                }
+            },
+            "QuoteResponse": {
+                "type": "object",
+                "properties": {
+                    "ok": {
+                        "const": true
+                    },
+                    "routes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "venue": {
+                                    "type": "string",
+                                    "example": "NEAR Intents"
+                                },
+                                "kind": {
+                                    "type": "string"
+                                },
+                                "out": {
+                                    "type": "number"
+                                },
+                                "minOut": {
+                                    "type": "number"
+                                },
+                                "outUsd": {
+                                    "type": "number",
+                                    "nullable": true
+                                },
+                                "etaSeconds": {
+                                    "type": "integer",
+                                    "nullable": true
+                                },
+                                "networkFeePct": {
+                                    "type": "number"
+                                }
+                            }
+                        }
+                    },
+                    "fee": {
+                        "type": "object",
+                        "properties": {
+                            "chargedPct": {
+                                "type": "number"
+                            },
+                            "referencePct": {
+                                "type": "number"
+                            },
+                            "chargedUsd": {
+                                "type": "number"
+                            },
+                            "beta": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "tier": {
+                        "type": "object"
+                    },
+                    "cashback": {
+                        "type": "object"
+                    },
+                    "cost": {
+                        "type": "object",
+                        "properties": {
+                            "midOut": {
+                                "type": "number",
+                                "nullable": true
+                            },
+                            "allInPct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "everything between mid-market and what lands; negative when the route beats mid"
+                            }
+                        }
+                    }
+                }
+            },
+            "OrderRequest": {
+                "type": "object",
+                "required": [
+                    "originAsset",
+                    "destinationAsset",
+                    "amount",
+                    "recipient",
+                    "refundTo"
+                ],
+                "properties": {
+                    "originAsset": {
+                        "type": "string"
+                    },
+                    "destinationAsset": {
+                        "type": "string"
+                    },
+                    "amount": {
+                        "type": "string"
+                    },
+                    "recipient": {
+                        "type": "string",
+                        "description": "must match the destination chain's address shape"
+                    },
+                    "refundTo": {
+                        "type": "string",
+                        "description": "must match the origin chain's address shape"
+                    },
+                    "slippageBps": {
+                        "type": "integer",
+                        "nullable": true
+                    }
+                }
+            },
+            "OrderResponse": {
+                "type": "object",
+                "properties": {
+                    "ok": {
+                        "const": true
+                    },
+                    "order": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string"
+                            },
+                            "venue": {
+                                "type": "string"
+                            },
+                            "status": {
+                                "type": "string",
+                                "enum": [
+                                    "PENDING_DEPOSIT",
+                                    "KNOWN_DEPOSIT_TX",
+                                    "PROCESSING",
+                                    "SUCCESS",
+                                    "REFUNDED",
+                                    "FAILED",
+                                    "INCOMPLETE_DEPOSIT"
+                                ]
+                            },
+                            "stage": {
+                                "type": "object"
+                            },
+                            "from": {
+                                "type": "object"
+                            },
+                            "to": {
+                                "type": "object"
+                            },
+                            "recipient": {
+                                "type": "string"
+                            },
+                            "refundTo": {
+                                "type": "string"
+                            },
+                            "depositAddress": {
+                                "type": "string"
+                            },
+                            "depositMemo": {
+                                "type": "string",
+                                "nullable": true
+                            },
+                            "deadline": {
+                                "type": "string",
+                                "nullable": true
+                            },
+                            "etaSeconds": {
+                                "type": "integer",
+                                "nullable": true
+                            },
+                            "feePctCharged": {
+                                "type": "number"
+                            },
+                            "referenceCashbackUsd": {
+                                "type": "number"
+                            },
+                            "createdAt": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
