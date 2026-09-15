@@ -11,14 +11,35 @@ https://app.darkroute.exchange/api/v1
 |---|---|---|---|
 | GET | `/tokens` | Assets the router can quote, popular first | 60/min |
 | POST | `/quote` | Dry quote for a pair and amount. Never creates an order | 40/min |
-| POST | `/order` | Create an order; returns the id. Deposit address is on the status call | 10/min |
+| POST | `/order` | Create an order; returns the id. Deposit address is on the status call. **Partner key required** | 10/min |
 | GET | `/order/{id}` | Status, deposit address, deadline, fee, receipt data | per IP |
 | GET | `/stats` | Orders, settled, volume, gross fee, burned. Cached 60 s | 60/min |
 | GET | `/burns` | Buybacks and burns with hashes, plus two live supply numbers | 60/min |
 | GET | `/openapi.json` | The spec, also in this repo as [`openapi.json`](./openapi.json) | cached |
 
-Limits are per IP. There is no API key yet; keys with limits per $DARK tier are on the roadmap and
-keyless access stays when they arrive. CORS is open, so the API works from a browser too.
+Limits are per IP. CORS is open, so the API works from a browser too.
+
+Every route above is public except one: **`POST /order` needs a partner key** from 15 September
+2026. Quoting, prices, status and supply stay open to anyone, without asking us for anything.
+
+An earlier version of this file said the opposite: that keyless access would stay when keys
+arrived. It did not, for order creation, and the line is being corrected rather than deleted.
+Orders are where money moves and where having a name on the other end is worth something. The rest
+of the promise held.
+
+Keys are issued by hand. Email <support@darkroute.exchange>, say what you are building, and you
+get a key or a reason. What a key carries, and what a holder may and may not claim about DarkRoute,
+is at <https://darkroute.exchange/integrate>.
+
+```bash
+curl -X POST https://app.darkroute.exchange/api/v1/order \
+  -H "Authorization: Bearer dr_live_xxxxxxxxxxxxxxxxxxxx" \
+  -H "content-type: application/json" \
+  -d '{...}'
+```
+
+Send it as a header, never in a URL. URLs reach server logs, proxy logs, browser history and
+`Referer` headers, and a key that lands in any of those has to be replaced.
 
 Send a `User-Agent` header from scripts. Cloudflare in front of the app rejects the default
 `Python-urllib` agent with a 403; any real agent string passes (the Python example sets one).
@@ -34,7 +55,7 @@ curl -X POST https://app.darkroute.exchange/api/v1/quote \
   -H "content-type: application/json" \
   -d '{"originAsset":"nep141:eth.omft.near","destinationAsset":"nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near","amount":"0.1"}'
 
-# 3. order (addresses are validated against each chain's shape)
+# 3. order (needs a partner key; addresses are validated against each chain's shape)
 curl -X POST https://app.darkroute.exchange/api/v1/order \
   -H "content-type: application/json" \
   -d '{"originAsset":"…","destinationAsset":"…","amount":"0.1","recipient":"<destination address>","refundTo":"<origin address>"}'
