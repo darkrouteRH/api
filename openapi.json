@@ -2,8 +2,8 @@
     "openapi": "3.1.0",
     "info": {
         "title": "DarkRoute public API",
-        "version": "1.0.0",
-        "description": "Quote and route private, non-custodial swaps through DarkRoute. No API key yet: every route is public and rate-limited per IP. Keys with tier-based limits are on the roadmap. A quote never creates an order; an order returns a one-time deposit address from the venue and DarkRoute never holds funds. The fee is 0.3% of the input, printed on the quote.",
+        "version": "1.1.0",
+        "description": "Quote and route private, non-custodial swaps through DarkRoute. Every route is public and rate-limited per IP except POST /order, which needs a partner key from 15 September 2026: send it as Authorization: Bearer <key>, never in a URL. Keys are issued by hand, by email, at https://darkroute.exchange/integrate, which also sets out what a holder may and may not claim about DarkRoute. A quote never creates an order; an order returns a one-time deposit address from the venue and DarkRoute never holds funds. The fee is 0.3% of the input, printed on the quote. 1.1.0 documents GET /token/{address}/quote, which prices any token directly from its own Uniswap v4 pools on Robinhood Chain or Arc. The route itself is not new, only its entry here: it has been reachable under /v1 since the version alias existed, and leaving it undescribed meant callers had to read the app to find it. Nothing else changed.",
         "contact": {
             "email": "support@darkroute.exchange",
             "url": "https://darkroute.exchange/api"
@@ -70,7 +70,7 @@
         "/order": {
             "post": {
                 "summary": "Create an order and get the one-time deposit address",
-                "description": "Non-custodial: the venue issues the deposit address; funds go from the sender into the route. The order id is the only credential for the status endpoint, so treat it as a secret. Rate limit 10/min per IP.",
+                "description": "Non-custodial: the venue issues the deposit address; funds go from the sender into the route. The order id is the only credential for the status endpoint, so treat it as a secret. Needs a partner key: Authorization: Bearer <key>. Rate limit 10/min per IP.",
                 "requestBody": {
                     "required": true,
                     "content": {
@@ -104,13 +104,21 @@
                     "400": {
                         "$ref": "#/components/responses/Bad"
                     },
+                    "401": {
+                        "description": "no partner key, or a revoked one. See https://darkroute.exchange/integrate"
+                    },
                     "429": {
                         "$ref": "#/components/responses/Slow"
                     },
                     "502": {
                         "description": "venue did not return a deposit address"
                     }
-                }
+                },
+                "security": [
+                    {
+                        "partnerKey": []
+                    }
+                ]
             }
         },
         "/order/{id}": {
@@ -144,6 +152,78 @@
                 }
             }
         },
+        "/token/{address}/quote": {
+            "get": {
+                "summary": "What a token costs to trade, read from its own Uniswap v4 pools",
+                "description": "On-chain pricing for any token on Robinhood Chain or Arc, quoted through the v4 quoter rather than a listing. Returns the best pool we found and what the least favourable one that answered would have paid, so the spread between them is visible rather than claimed. ?chain=arc reads Arc; omitted, it reads Robinhood Chain. The route asset differs per chain: ETH on Robinhood Chain, USDC on Arc, where 78.7% of pools are quoted in USDC and only 1.7% in native. A token whose only pool is against something else gets no route and is told so. `chain.tradable` is false on Arc: it has no UniversalRouter deployed, so a fill can be priced there and not sent. Rate limit 60/min per IP.",
+                "parameters": [
+                    {
+                        "name": "address",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{40}$"
+                        }
+                    },
+                    {
+                        "name": "chain",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "rh",
+                                "arc"
+                            ],
+                            "default": "rh"
+                        }
+                    },
+                    {
+                        "name": "buy",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "number"
+                        },
+                        "description": "amount of the route asset to spend. One of buy or sell is required."
+                    },
+                    {
+                        "name": "sell",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "number"
+                        },
+                        "description": "amount of the token to sell"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "ok",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TokenQuoteResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/Bad"
+                    },
+                    "404": {
+                        "description": "no contract at that address on this chain"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/Slow"
+                    },
+                    "503": {
+                        "description": "no pool could fill that size, or the chain could not be read. These are distinguished in `error`: a chain we cannot reach is never reported as a token that does not exist."
+                    }
+                }
+            }
+        },
         "/stats": {
             "get": {
                 "summary": "Router aggregates since launch",
@@ -164,9 +244,66 @@
                     }
                 }
             }
+        },
+        "/supply": {
+            "get": {
+                "summary": "Max, total and circulating supply, each with the basis it was computed from",
+                "responses": {
+                    "200": {
+                        "description": "ok"
+                    }
+                }
+            }
+        },
+        "/supply/total": {
+            "get": {
+                "summary": "Total supply as one bare number in text/plain, for listing sites",
+                "responses": {
+                    "200": {
+                        "description": "a number, e.g. 942293314.337855",
+                        "content": {
+                            "text/plain": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "the chain could not be read; no number is guessed"
+                    }
+                }
+            }
+        },
+        "/supply/circulating": {
+            "get": {
+                "summary": "Circulating supply as one bare number in text/plain. Excludes the tokens the launchpad locked permanently, so it reads lower than total minus the dead address",
+                "responses": {
+                    "200": {
+                        "description": "a number, e.g. 860660661.276631",
+                        "content": {
+                            "text/plain": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "the chain could not be read; no number is guessed"
+                    }
+                }
+            }
         }
     },
     "components": {
+        "securitySchemes": {
+            "partnerKey": {
+                "type": "http",
+                "scheme": "bearer",
+                "description": "Issued by hand at https://darkroute.exchange/integrate. Send it as a header; a key in a URL reaches server logs, proxy logs, browser history and Referer headers, and then has to be replaced."
+            }
+        },
         "responses": {
             "Bad": {
                 "description": "validation error, message in `error`"
@@ -176,6 +313,111 @@
             }
         },
         "schemas": {
+            "TokenQuoteResponse": {
+                "type": "object",
+                "properties": {
+                    "ok": {
+                        "const": true
+                    },
+                    "chain": {
+                        "type": "object",
+                        "properties": {
+                            "key": {
+                                "type": "string",
+                                "example": "arc"
+                            },
+                            "id": {
+                                "type": "integer",
+                                "example": 5042
+                            },
+                            "name": {
+                                "type": "string"
+                            },
+                            "routeAsset": {
+                                "type": "string",
+                                "example": "USDC"
+                            },
+                            "tradable": {
+                                "type": "boolean",
+                                "description": "false when the chain has no UniversalRouter we can address a swap to"
+                            }
+                        }
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": [
+                            "buy",
+                            "sell"
+                        ]
+                    },
+                    "token": {
+                        "type": "object",
+                        "properties": {
+                            "address": {
+                                "type": "string"
+                            },
+                            "symbol": {
+                                "type": "string",
+                                "nullable": true
+                            },
+                            "decimals": {
+                                "type": "integer"
+                            }
+                        }
+                    },
+                    "route": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                            "poolId": {
+                                "type": "string"
+                            },
+                            "key": {
+                                "type": "object",
+                                "description": "the v4 PoolKey: currency0, currency1, fee, tickSpacing, hooks"
+                            },
+                            "zeroForOne": {
+                                "type": "boolean"
+                            },
+                            "out": {
+                                "type": "number",
+                                "description": "whole units of the output asset"
+                            },
+                            "lpFeePct": {
+                                "type": "number"
+                            },
+                            "hooked": {
+                                "type": "boolean",
+                                "description": "the pool has a hook, which can take a cut on top of the LP fee; the cost below already includes it"
+                            },
+                            "allInPct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "everything between the pool price and what lands"
+                            },
+                            "considered": {
+                                "type": "integer"
+                            },
+                            "worst": {
+                                "type": "number",
+                                "nullable": true
+                            },
+                            "worstFeePct": {
+                                "type": "number",
+                                "nullable": true
+                            }
+                        }
+                    },
+                    "alt": {
+                        "type": "object",
+                        "nullable": true,
+                        "description": "an outside quote from route.fun, already net of their fee, on Robinhood Chain buys only. Shown so the comparison is visible; we do not execute through them."
+                    },
+                    "note": {
+                        "type": "string"
+                    }
+                }
+            },
             "TokensResponse": {
                 "type": "object",
                 "properties": {

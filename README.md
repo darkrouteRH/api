@@ -13,11 +13,50 @@ https://app.darkroute.exchange/api/v1
 | POST | `/quote` | Dry quote for a pair and amount. Never creates an order | 40/min |
 | POST | `/order` | Create an order; returns the id. Deposit address is on the status call. **Partner key required** | 10/min |
 | GET | `/order/{id}` | Status, deposit address, deadline, fee, receipt data | per IP |
+| GET | `/token/{address}/quote` | What a token costs to trade, read from its own Uniswap v4 pools. Robinhood Chain or Arc | 60/min |
 | GET | `/stats` | Orders, settled, volume, gross fee, burned. Cached 60 s | 60/min |
 | GET | `/burns` | Buybacks and burns with hashes, plus two live supply numbers | 60/min |
 | GET | `/openapi.json` | The spec, also in this repo as [`openapi.json`](./openapi.json) | cached |
 
 Limits are per IP. CORS is open, so the API works from a browser too.
+
+## Pricing a token from its own pools
+
+`GET /token/{address}/quote` is different from `POST /quote`. That one asks a cross-chain venue what
+it would fill. This one reads Uniswap v4 directly and tells you what a given token costs to trade on
+the chain it lives on: the best pool, its fee, whether it has a hook, and what stands between the
+pool price and what actually lands.
+
+```bash
+# Robinhood Chain, spending 0.01 ETH
+curl "https://app.darkroute.exchange/api/v1/token/0xebB4C5B97E4117e30EC82ce025E6f21dded05436/quote?buy=0.01"
+
+# Arc, spending 1 USDC
+curl "https://app.darkroute.exchange/api/v1/token/0x01d776dc060f5a0a7296ac60a2222c992e284f01/quote?chain=arc&buy=1"
+
+# selling instead
+curl ".../quote?chain=arc&sell=100000"
+```
+
+Two things in the response are worth reading before you build on it.
+
+**`chain.routeAsset` is not the same everywhere.** Robinhood Chain routes through native ETH. Arc
+routes through USDC at `0x3600…0000`, because 78.7% of Arc's v4 pools are quoted in USDC and only
+1.7% in native. A token whose only pool is against something else gets no route and is told so,
+rather than being quietly sent somewhere it did not ask to go.
+
+**`chain.tradable` can be false.** On Arc it is, and will stay false until somebody deploys a
+UniversalRouter there: it is the contract a swap is addressed to, and Arc has none. We can price a
+fill on Arc and we cannot send one. The field exists so your code can tell the difference instead of
+discovering it at signing time.
+
+`worst` is what the least favourable pool that answered would have paid for the same size. It is
+there so the spread between pools is visible rather than claimed. On a chain where anyone can open a
+pool for any token, that gap has been measured at more than 90 points.
+
+A `503` means either no pool could fill that size or the chain could not be read. The two are
+distinguished in `error`, deliberately: a chain we cannot reach is never reported to you as a token
+that does not exist.
 
 Every route above is public except one: **`POST /order` needs a partner key** from 15 September
 2026. Quoting, prices, status and supply stay open to anyone, without asking us for anything.
