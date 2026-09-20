@@ -3,7 +3,7 @@
     "info": {
         "title": "DarkRoute public API",
         "version": "1.1.0",
-        "description": "Quote and route private, non-custodial swaps through DarkRoute. Every route is public and rate-limited per IP except POST /order, which needs a partner key from 15 September 2026: send it as Authorization: Bearer <key>, never in a URL. Keys are issued by hand, by email, at https://darkroute.exchange/integrate, which also sets out what a holder may and may not claim about DarkRoute. A quote never creates an order; an order returns a one-time deposit address from the venue and DarkRoute never holds funds. The fee is 0.3% of the input, printed on the quote. 1.1.0 documents GET /token/{address}/quote, which prices any token directly from its own Uniswap v4 pools on Robinhood Chain or Arc. The route itself is not new, only its entry here: it has been reachable under /v1 since the version alias existed, and leaving it undescribed meant callers had to read the app to find it. Nothing else changed.",
+        "description": "Quote and route private, non-custodial swaps through DarkRoute. Every route is public and rate-limited per IP except POST /order, which needs a partner key or a short lived token the site issues to a real page load and binds to that caller's address. The token is not a wall: a script that fetches one first can still create orders, and we would rather say so than imply a gate we do not have. Until 20 September 2026 this said a key was required outright, and the check behind it read the Origin header, which any caller sets. Reported by gege. A partner key is sent as Authorization: Bearer <key>, never in a URL. Keys are issued by hand, by email, at https://darkroute.exchange/integrate, which also sets out what a holder may and may not claim about DarkRoute. A quote never creates an order; an order returns a one-time deposit address from the venue and DarkRoute never holds funds. The fee is 0.3% of the input, printed on the quote. 1.1.0 documents GET /token/{address}/quote, which prices any token directly from its own Uniswap v4 pools on Robinhood Chain or Arc. The route itself is not new, only its entry here: it has been reachable under /v1 since the version alias existed, and leaving it undescribed meant callers had to read the app to find it. Nothing else changed.",
         "contact": {
             "email": "support@darkroute.exchange",
             "url": "https://darkroute.exchange/api"
@@ -70,7 +70,7 @@
         "/order": {
             "post": {
                 "summary": "Create an order and get the one-time deposit address",
-                "description": "Non-custodial: the venue issues the deposit address; funds go from the sender into the route. The order id is the only credential for the status endpoint, so treat it as a secret. Needs a partner key: Authorization: Bearer <key>. Rate limit 10/min per IP.",
+                "description": "Non-custodial: the venue issues the deposit address; funds go from the sender into the route. The order id is the only credential for the status endpoint, so treat it as a secret. Needs a partner key (Authorization: Bearer <key>), or an x-order-token from GET /api/order/token, which the site issues to a page load and binds to the caller's IP for two minutes. Rate limit 10/min per IP.",
                 "requestBody": {
                     "required": true,
                     "content": {
@@ -105,7 +105,7 @@
                         "$ref": "#/components/responses/Bad"
                     },
                     "401": {
-                        "description": "no partner key, or a revoked one. See https://darkroute.exchange/integrate"
+                        "description": "no partner key and no valid order token, or a revoked key. See https://darkroute.exchange/integrate"
                     },
                     "429": {
                         "$ref": "#/components/responses/Slow"
@@ -155,7 +155,7 @@
         "/token/{address}/quote": {
             "get": {
                 "summary": "What a token costs to trade, read from its own Uniswap v4 pools",
-                "description": "On-chain pricing for any token on Robinhood Chain or Arc, quoted through the v4 quoter rather than a listing. Returns the best pool we found and what the least favourable one that answered would have paid, so the spread between them is visible rather than claimed. ?chain=arc reads Arc; omitted, it reads Robinhood Chain. The route asset differs per chain: ETH on Robinhood Chain, USDC on Arc, where 78.7% of pools are quoted in USDC and only 1.7% in native. A token whose only pool is against something else gets no route and is told so. `chain.tradable` is false on Arc: it has no UniversalRouter deployed, so a fill can be priced there and not sent. Rate limit 60/min per IP.",
+                "description": "On-chain pricing for any token on Robinhood Chain or Arc, quoted through the v4 quoter rather than a listing. Returns the best pool we found and what the least favourable one that answered would have paid, so the spread between them is visible rather than claimed. ?chain=arc reads Arc; omitted, it reads Robinhood Chain. The route asset differs per chain: ETH on Robinhood Chain, USDC on Arc, where 78.7% of pools are quoted in USDC and only 1.7% in native. A token whose only pool is against something else gets no route and is told so. `chain.tradable` is false on Arc, and the limit is ours rather than the chain's: a UniversalRouter is deployed there and carries most of Arc's v4 swaps, but our swap path is still wired to Robinhood Chain, so we will not offer to send a fill we cannot address correctly. `chain.router` names the router we found, so a caller can route around us. Rate limit 60/min per IP.",
                 "parameters": [
                     {
                         "name": "address",
@@ -337,9 +337,14 @@
                                 "type": "string",
                                 "example": "USDC"
                             },
+                            "router": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "the UniversalRouter we found on this chain, or null when none is deployed"
+                            },
                             "tradable": {
                                 "type": "boolean",
-                                "description": "false when the chain has no UniversalRouter we can address a swap to"
+                                "description": "false when DarkRoute will not send a fill here. Read `router` to tell the two reasons apart: null means the chain has none, an address means ours is the missing half"
                             }
                         }
                     },

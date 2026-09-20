@@ -11,7 +11,7 @@ https://app.darkroute.exchange/api/v1
 |---|---|---|---|
 | GET | `/tokens` | Assets the router can quote, popular first | 60/min |
 | POST | `/quote` | Dry quote for a pair and amount. Never creates an order | 40/min |
-| POST | `/order` | Create an order; returns the id. Deposit address is on the status call. **Partner key required** | 10/min |
+| POST | `/order` | Create an order; returns the id. Deposit address is on the status call. **Partner key, or a site-issued order token** | 10/min |
 | GET | `/order/{id}` | Status, deposit address, deadline, fee, receipt data | per IP |
 | GET | `/token/{address}/quote` | What a token costs to trade, read from its own Uniswap v4 pools. Robinhood Chain or Arc | 60/min |
 | GET | `/stats` | Orders, settled, volume, gross fee, burned. Cached 60 s | 60/min |
@@ -58,8 +58,14 @@ A `503` means either no pool could fill that size or the chain could not be read
 distinguished in `error`, deliberately: a chain we cannot reach is never reported to you as a token
 that does not exist.
 
-Every route above is public except one: **`POST /order` needs a partner key** from 15 September
-2026. Quoting, prices, status and supply stay open to anyone, without asking us for anything.
+Every route above is public except one: **`POST /order` needs a partner key, or a short lived token the site
+issues to a real page load and binds to the caller's IP**.
+
+Until 20 September 2026 this said a key was required outright. The check behind that read the
+`Origin` header, which any caller sets, so one added header walked through it. An outside
+reporter, gege, showed us after we had told him it was closed. The token shuts the trivial
+case and not a script that fetches a token first, and we would rather describe it accurately
+than promise a wall. Keys have been needed since 15 September 2026. Quoting, prices, status and supply stay open to anyone, without asking us for anything.
 
 An earlier version of this file said the opposite: that keyless access would stay when keys
 arrived. It did not, for order creation, and the line is being corrected rather than deleted.
