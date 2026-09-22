@@ -14,6 +14,7 @@ https://app.darkroute.exchange/api/v1
 | POST | `/order` | Create an order; returns the id. Deposit address is on the status call. **Partner key, or a site-issued order token** | 10/min |
 | GET | `/order/{id}` | Status, deposit address, deadline, fee, receipt data | per IP |
 | GET | `/token/{address}/quote` | What a token costs to trade, read from its own Uniswap v4 pools. Robinhood Chain or Arc | 60/min |
+| GET | `/nft/destination` | Whether an address has ever been used, for the NFT checkout flow | 60/min |
 | GET | `/stats` | Orders, settled, volume, gross fee, burned. Cached 60 s | 60/min |
 | GET | `/burns` | Buybacks and burns with hashes, plus two live supply numbers | 60/min |
 | GET | `/openapi.json` | The spec, also in this repo as [`openapi.json`](./openapi.json) | cached |
@@ -141,3 +142,41 @@ Open an issue here, or write to support@darkroute.exchange. Security issues: see
 [darkroute.exchange/security](https://darkroute.exchange/security).
 
 Docs page: [darkroute.exchange/api](https://darkroute.exchange/api).
+
+## `/nft/destination`
+
+Reports whether a destination address has ever been used, and says why when it has.
+
+It exists for the NFT checkout flow on app.darkroute.exchange/nft, whose claim is narrow on
+purpose: everyone knows that address bought the NFT, nobody knows the address is you. An NFT
+transfer cannot be hidden. Ownership is public state rather than only public history, so anyone
+can query who holds a token right now. What can be kept apart is the wallet that paid and the
+address that bought, and that only holds while the second address has no history of its own.
+
+So the check is the product, not decoration. Three signals, any one of them enough:
+
+| signal | what it means |
+|---|---|
+| nonce above zero | it has sent transactions, so it has a public history |
+| contract code | a contract or a delegated account, carrying its own trail |
+| a balance | something arrived before, and whoever sent it can watch what happens next |
+
+```bash
+curl "https://app.darkroute.exchange/api/v1/nft/destination?chain=rh&address=0x…"
+```
+
+```json
+{"ok":true,"fresh":false,"reasons":[
+  "it has sent 36 transactions",
+  "it carries contract code, so it has its own history",
+  "it already holds a balance, so somebody watched funds arrive"]}
+```
+
+The reasons are sentences rather than codes because they are meant to be shown to a person.
+
+Two failures that are deliberately not collapsed into one. A chain we cannot reach answers `503`
+and never `fresh`: reporting our own outage as a clean address would be worse than having no check
+at all. A malformed address answers `400` rather than blaming the chain, which is a mistake this
+project has made before and does not intend to repeat.
+
+Read only. Nothing is stored and nothing is logged; the address does not leave the request.

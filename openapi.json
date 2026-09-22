@@ -2,8 +2,8 @@
     "openapi": "3.1.0",
     "info": {
         "title": "DarkRoute public API",
-        "version": "1.1.0",
-        "description": "Quote and route private, non-custodial swaps through DarkRoute. Every route is public and rate-limited per IP except POST /order, which needs a partner key or a short lived token the site issues to a real page load and binds to that caller's address. The token is not a wall: a script that fetches one first can still create orders, and we would rather say so than imply a gate we do not have. Until 20 September 2026 this said a key was required outright, and the check behind it read the Origin header, which any caller sets. Reported by gege. A partner key is sent as Authorization: Bearer <key>, never in a URL. Keys are issued by hand, by email, at https://darkroute.exchange/integrate, which also sets out what a holder may and may not claim about DarkRoute. A quote never creates an order; an order returns a one-time deposit address from the venue and DarkRoute never holds funds. The fee is 0.3% of the input, printed on the quote. 1.1.0 documents GET /token/{address}/quote, which prices any token directly from its own Uniswap v4 pools on Robinhood Chain or Arc. The route itself is not new, only its entry here: it has been reachable under /v1 since the version alias existed, and leaving it undescribed meant callers had to read the app to find it. Nothing else changed.",
+        "version": "1.2.0",
+        "description": "Quote and route private, non-custodial swaps through DarkRoute. Every route is public and rate-limited per IP except POST /order, which needs a partner key or a short lived token the site issues to a real page load and binds to that caller's address. The token is not a wall: a script that fetches one first can still create orders, and we would rather say so than imply a gate we do not have. Until 20 September 2026 this said a key was required outright, and the check behind it read the Origin header, which any caller sets. Reported by gege. A partner key is sent as Authorization: Bearer <key>, never in a URL. Keys are issued by hand, by email, at https://darkroute.exchange/integrate, which also sets out what a holder may and may not claim about DarkRoute. A quote never creates an order; an order returns a one-time deposit address from the venue and DarkRoute never holds funds. The fee is 0.3% of the input, printed on the quote. 1.1.0 documents GET /token/{address}/quote, which prices any token directly from its own Uniswap v4 pools on Robinhood Chain or Arc. The route itself is not new, only its entry here: it has been reachable under /v1 since the version alias existed, and leaving it undescribed meant callers had to read the app to find it. 1.2.0 documents GET /nft/destination, which reports whether an address has ever been used. Same correction as the one above and for the same reason: the blanket /v1 alias made it public the moment it shipped, so an undocumented route is one callers can only find by reading the app. Nothing else changed.",
         "contact": {
             "email": "support@darkroute.exchange",
             "url": "https://darkroute.exchange/api"
@@ -224,6 +224,57 @@
                 }
             }
         },
+        "/nft/destination": {
+            "get": {
+                "summary": "Whether a destination address has ever been used",
+                "description": "For the NFT checkout flow, where the claim is that everyone knows an address bought the NFT and nobody knows the address is you. That only holds while the address has no history, so this reports one. Three signals, any one of them enough: a nonce above zero (it has sent transactions), contract code (a contract or a delegated account), or a balance (something arrived, and whoever sent it can watch what happens next). Each refusal carries its reason in plain words, meant to be shown to a person. Read only, nothing stored, nothing logged: the address does not leave the request. A chain we cannot reach answers 503 and never \"fresh\", because reporting our own outage as a clean address would be worse than having no check. A malformed address answers 400 rather than blaming the chain. Rate limit 60/min per IP.",
+                "parameters": [
+                    {
+                        "name": "address",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "pattern": "^0x[0-9a-fA-F]{40}$"
+                        }
+                    },
+                    {
+                        "name": "chain",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "rh",
+                                "arc"
+                            ],
+                            "default": "rh"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "ok",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DestinationResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/Bad"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/Slow"
+                    },
+                    "503": {
+                        "description": "the chain could not be read; the address is never reported as unused on our own failure"
+                    }
+                }
+            }
+        },
         "/stats": {
             "get": {
                 "summary": "Router aggregates since launch",
@@ -313,6 +364,29 @@
             }
         },
         "schemas": {
+            "DestinationResponse": {
+                "type": "object",
+                "properties": {
+                    "ok": {
+                        "const": true
+                    },
+                    "fresh": {
+                        "type": "boolean",
+                        "description": "true only when none of the three signals fired"
+                    },
+                    "reasons": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "present only when fresh is false. One plain sentence per signal, written to be shown to a person rather than parsed."
+                    }
+                },
+                "required": [
+                    "ok",
+                    "fresh"
+                ]
+            },
             "TokenQuoteResponse": {
                 "type": "object",
                 "properties": {
