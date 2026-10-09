@@ -2,8 +2,8 @@
     "openapi": "3.1.0",
     "info": {
         "title": "DarkRoute public API",
-        "version": "1.2.0",
-        "description": "Quote and route private, non-custodial swaps through DarkRoute. Every route is public and rate-limited per IP except POST /order, which needs a partner key or a short lived token the site issues to a real page load and binds to that caller's address. The token is not a wall: a script that fetches one first can still create orders, and we would rather say so than imply a gate we do not have. Until 20 September 2026 this said a key was required outright, and the check behind it read the Origin header, which any caller sets. Reported by gege. A partner key is sent as Authorization: Bearer <key>, never in a URL. Keys are issued by hand, by email, at https://darkroute.exchange/integrate, which also sets out what a holder may and may not claim about DarkRoute. A quote never creates an order; an order returns a one-time deposit address from the venue and DarkRoute never holds funds. The fee is 0.3% of the input, printed on the quote. 1.1.0 documents GET /token/{address}/quote, which prices any token directly from its own Uniswap v4 pools on Robinhood Chain or Arc. The route itself is not new, only its entry here: it has been reachable under /v1 since the version alias existed, and leaving it undescribed meant callers had to read the app to find it. 1.2.0 documents GET /nft/destination, which reports whether an address has ever been used. Same correction as the one above and for the same reason: the blanket /v1 alias made it public the moment it shipped, so an undocumented route is one callers can only find by reading the app. Nothing else changed.",
+        "version": "1.4.0",
+        "description": "Quote and route private, non-custodial swaps through DarkRoute. Every route is public and rate-limited per IP except POST /order, which needs a partner key or a short lived token the site issues to a real page load and binds to that caller's address. The token is not a wall: a script that fetches one first can still create orders, and we would rather say so than imply a gate we do not have. Until 20 September 2026 this said a key was required outright, and the check behind it read the Origin header, which any caller sets. Reported by gege. A partner key is sent as Authorization: Bearer <key>, never in a URL. Keys are issued by hand, by email, at https://darkroute.exchange/integrate, which also sets out what a holder may and may not claim about DarkRoute. A quote never creates an order; an order returns a one-time deposit address from the venue and DarkRoute never holds funds. The fee is 0.3% of the input, printed on the quote. 1.1.0 documents GET /token/{address}/quote, which prices any token directly from its own Uniswap v4 pools on Robinhood Chain or Arc. The route itself is not new, only its entry here: it has been reachable under /v1 since the version alias existed, and leaving it undescribed meant callers had to read the app to find it. 1.4.0 documents GET /onramp, and corrects /stocks: it said the creators of these contracts could not be read, and they now are. 1.3.0 documents GET /stocks, in the same commit as the route this time rather than after it. 1.2.0 documents GET /nft/destination, which reports whether an address has ever been used. Same correction as the one above and for the same reason: the blanket /v1 alias made it public the moment it shipped, so an undocumented route is one callers can only find by reading the app. Nothing else changed.",
         "contact": {
             "email": "support@darkroute.exchange",
             "url": "https://darkroute.exchange/api"
@@ -275,6 +275,86 @@
                 }
             }
         },
+        "/stocks": {
+            "get": {
+                "summary": "Which token behind a stock ticker matches the Robinhood token family",
+                "description": "Every stock ticker on Robinhood Chain has copies. Two checks decide which token behind a ticker is which. The shape: every token named \"<Company> • Robinhood Token\" we have found is the same BeaconProxy bytecode pointed at the same beacon, and none of the copies are. The creator: measured 10 October 2026 through an archive node, all 17 family tokens were created by the StockFactory at 0x4783c67b63de2b358ac5951a7d41f47a38f3c046, called from 0x5516b3451d4d6c9f63353fe7bc9537477ecce000, and none of the 14 copies were. Replaying a fresh creation through that factory succeeded from that account and was refused from three other addresses we tried; other permitted accounts cannot be ruled out. `standing` is family, impostor or other. impostor means either a name that claims to be a Robinhood Token on a contract that fails the shape test, or the family shape on a contract we can show was created outside the factory. `creator` is factory, elsewhere or unread, and is null for tokens that fail the shape test. unread means our own lookup failed or was not attempted (no archive access, capacity, timeout); standing then stays family, so `standing === \"family\"` alone is not a match: a match is standing family with creator factory. `provenance` carries the block and transaction where we have them, and `creationsAt` dates the creator research. Still not proof of who controls the account that calls the factory, so nothing here says official or verified. Identity only; no exit cost is returned. The ticker list is sampled from chain activity and dated in `sampledAt`; a contract passed directly is checked live. Without q, returns the sampled tickers. Rate limit 30/min per IP.",
+                "parameters": [
+                    {
+                        "name": "q",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "a ticker (AAPL, $aapl) or a contract address"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "ok",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/StocksResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/Bad"
+                    },
+                    "404": {
+                        "description": "no stock token with that ticker in our sample, and no contract at that address"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/Slow"
+                    },
+                    "503": {
+                        "description": "Robinhood Chain could not be read; nothing is reported as a family member on our own failure"
+                    }
+                }
+            }
+        },
+        "/onramp": {
+            "get": {
+                "summary": "Routes into Robinhood Chain from other chains, priced live",
+                "description": "Answers how to get funds into Robinhood Chain. For a destination on Robinhood Chain (ETH by default, or USDG with ?to=usdg), every listed origin asset is quoted as a dry quote at about `targetUsd` dollars of the origin, with placeholder addresses, so rows compare. Nothing here opens a deposit address. `venue` names who fills the routes. `etaSeconds` is the venue's own estimate and includes the origin chain's confirmations; we have not timed completed transfers against it. `fee` is our fee at the full rate; a $DARK holder's discount is applied on the swap card's own quote. A row that did not quote stays in `rows` with `error` and `errorKind` (refused, venue_error, timeout, unreachable, no_price, unavailable): only for refused is `error` the venue's own words, and `minimumUsd` is set when a refusal was a size minimum. The table is cached per destination, see `computedAt` and `maxAgeSeconds`, so polling faster returns the same numbers. Rate limit 20/min per IP.",
+                "parameters": [
+                    {
+                        "name": "to",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "eth",
+                                "usdg"
+                            ],
+                            "default": "eth"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "ok",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OnrampResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/Bad"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/Slow"
+                    }
+                }
+            }
+        },
         "/stats": {
             "get": {
                 "summary": "Router aggregates since launch",
@@ -364,6 +444,206 @@
             }
         },
         "schemas": {
+            "OnrampResponse": {
+                "type": "object",
+                "properties": {
+                    "ok": {
+                        "const": true
+                    },
+                    "to": {
+                        "enum": [
+                            "eth",
+                            "usdg"
+                        ]
+                    },
+                    "destination": {
+                        "type": "object"
+                    },
+                    "targetUsd": {
+                        "type": "number"
+                    },
+                    "slippageBps": {
+                        "type": "number"
+                    },
+                    "venue": {
+                        "type": "string"
+                    },
+                    "fee": {
+                        "type": "object"
+                    },
+                    "computedAt": {
+                        "type": "number",
+                        "description": "ms since epoch"
+                    },
+                    "maxAgeSeconds": {
+                        "type": "number"
+                    },
+                    "rows": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "origin": {
+                                    "type": "object"
+                                },
+                                "send": {
+                                    "type": [
+                                        "object",
+                                        "null"
+                                    ]
+                                },
+                                "receive": {
+                                    "type": [
+                                        "object",
+                                        "null"
+                                    ],
+                                    "description": "amount, min and usd; null whenever error is set"
+                                },
+                                "etaSeconds": {
+                                    "type": [
+                                        "number",
+                                        "null"
+                                    ]
+                                },
+                                "venue": {
+                                    "type": "string"
+                                },
+                                "fee": {
+                                    "type": "object"
+                                },
+                                "error": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ]
+                                },
+                                "errorKind": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "enum": [
+                                        "refused",
+                                        "venue_error",
+                                        "timeout",
+                                        "unreachable",
+                                        "no_price",
+                                        "unavailable",
+                                        null
+                                    ]
+                                },
+                                "minimumUsd": {
+                                    "type": [
+                                        "number",
+                                        "null"
+                                    ]
+                                },
+                                "rank": {
+                                    "type": "number"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "StocksResponse": {
+                "type": "object",
+                "properties": {
+                    "ok": {
+                        "const": true
+                    },
+                    "query": {
+                        "type": "string"
+                    },
+                    "ticker": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "sampledAt": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "tokens": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "address": {
+                                    "type": "string"
+                                },
+                                "name": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ]
+                                },
+                                "symbol": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ]
+                                },
+                                "supply": {
+                                    "type": [
+                                        "number",
+                                        "null"
+                                    ]
+                                },
+                                "codeHash": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ]
+                                },
+                                "beacon": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ]
+                                },
+                                "standing": {
+                                    "enum": [
+                                        "family",
+                                        "impostor",
+                                        "other"
+                                    ]
+                                },
+                                "shape": {
+                                    "enum": [
+                                        "family",
+                                        "impostor",
+                                        "other"
+                                    ]
+                                },
+                                "creator": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "enum": [
+                                        "factory",
+                                        "elsewhere",
+                                        "unread",
+                                        null
+                                    ]
+                                },
+                                "provenance": {
+                                    "type": [
+                                        "object",
+                                        "null"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "creationsAt": {
+                        "type": "string",
+                        "format": "date"
+                    }
+                }
+            },
             "DestinationResponse": {
                 "type": "object",
                 "properties": {
